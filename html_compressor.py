@@ -16,7 +16,7 @@ compression_level = st.sidebar.radio(
         "2️⃣ Smart版（推奨）",
         "3️⃣ Aggressive版",
         "4️⃣ 完全圧縮",
-        "5️⃣ 整形モード（インデント最適化）"  # 新機能
+        "5️⃣ 整形モード（インデント最適化）"
     ]
 )
 
@@ -119,8 +119,6 @@ def insert_line_breaks_for_activecore(html: str, max_bytes: int = 800) -> str:
     processed_lines = []
     
     for line in original_lines:
-        # 整形モードなどで作られた行頭スペースは維持したいが、判定のために一瞬除外して計算するか？
-        # いや、インデント込みで800バイト超えたらアウトなので、そのままチェックする
         line_clean = line.rstrip() 
         if not line_clean:
             continue
@@ -139,37 +137,30 @@ def insert_line_breaks_for_activecore(html: str, max_bytes: int = 800) -> str:
 def format_html_structure(html: str) -> str:
     """
     HTMLの構造を解析し、インデントを「スペース2個」に統一して再構築する。
-    無駄な深すぎるインデントを削除し、容量を削減しつつ可読性を保つ。
     """
-    # 1. まず余分な空白や改行を除去して1行にするイメージで処理（Smart圧縮に近い状態にする）
-    # ただし、コンテンツ内の改行は守りたいので、タグベースで分解する
-    
-    # コメントなどは残す
-    
-    # タグとテキストに分解 (<tag> または </tag> または テキスト)
+    # タグとテキストに分解
     tokens = re.split(r'(<[^>]+>)', html)
     tokens = [t.strip() for t in tokens if t.strip()]
     
     formatted_lines = []
     indent_level = 0
-    indent_unit = "  " # スペース2個（容量節約のため少なめに）
+    indent_unit = "  " # スペース2個
     
-    # インデントを下げないタグ（Void Elements）
+    # インデントを下げないタグ（Void Elements + doctype）
     void_tags = {
         'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 
-        'link', 'meta', 'param', 'source', 'track', 'wbr', '!doctype'
+        'link', 'meta', 'param', 'source', 'track', 'wbr', '!doctype', '?xml'
     }
     
     for token in tokens:
-        # 終了タグ (例: </div>)
+        # 終了タグ </...>
         if re.match(r'^</', token):
             indent_level = max(0, indent_level - 1)
             formatted_lines.append((indent_unit * indent_level) + token)
             
-        # 開始タグ (例: <div ...>)
+        # 開始タグ <...>
         elif re.match(r'^<', token):
-            # コメントの場合はインデントそのまま
-            if token.startswith('', '', result, flags=re.DOTALL)
+            # コメント if token.startswith('', '', result, flags=re.DOTALL)
     result = re.sub(r'[ \t]+', ' ', result)
     result = '\n'.join(line.strip() for line in result.split('\n'))
     result = re.sub(r'\n\s*\n', '\n', result)
