@@ -2,7 +2,7 @@ import streamlit as st
 import re
 from io import BytesIO
 
-# ページ設定
+# --- ページ設定 ---
 st.set_page_config(page_title="HTML圧縮ツール", layout="wide", page_icon="🗜️")
 
 st.title("🗜️ HTML圧縮ツール")
@@ -10,6 +10,8 @@ st.markdown("HTMLファイルを最適化します。MAツール制限（1行800
 
 # --- サイドバー設定 ---
 st.sidebar.header("⚙️ 設定")
+
+# 圧縮レベルの選択肢
 compression_level = st.sidebar.radio(
     "圧縮レベルを選択",
     [
@@ -22,6 +24,8 @@ compression_level = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
+
+# アクティブコアモード設定
 activecore_mode = st.sidebar.checkbox(
     "📤 アクティブコアモード",
     value=False,
@@ -56,16 +60,17 @@ st.sidebar.markdown("""
 - 全ての不要な空白削除、最小サイズ
 
 **整形モード**
-- 余分なインデントを削除
+- 余分なインデントを削除して軽量化
 - 階層構造（＞の形）を維持
-- 編集しやすく、かつ軽くする
 """)
 
 
-# --- ヘルパー関数：安全な改行挿入（ACモード用） ---
+# ==========================================
+# 関数定義エリア
+# ==========================================
 
 def split_line_safely(line: str, max_bytes: int) -> list:
-    """1行が長い場合に、タグの区切り目（>）で安全に分割する。"""
+    """1行が長い場合に、タグの区切り目（>）で安全に分割する"""
     if len(line.encode('utf-8')) <= max_bytes:
         return [line]
 
@@ -116,7 +121,7 @@ def split_line_safely(line: str, max_bytes: int) -> list:
 
 
 def insert_line_breaks_for_activecore(html: str, max_bytes: int = 800) -> str:
-    """アクティブコア対応：800バイトを超える行だけを処理する。"""
+    """アクティブコア対応：800バイトを超える行だけを処理する"""
     original_lines = html.split('\n')
     processed_lines = []
     
@@ -134,10 +139,8 @@ def insert_line_breaks_for_activecore(html: str, max_bytes: int = 800) -> str:
     return '\n'.join(processed_lines)
 
 
-# --- ヘルパー関数：整形（インデント最適化） ---
-
 def format_html_structure(html: str) -> str:
-    """HTMLの構造を解析し、インデントを再構築する。"""
+    """HTMLの構造を解析し、インデントを再構築する（整形モード）"""
     # HTMLをトークンに分解
     tokens = re.split(r'(<[^>]+>)', html)
     tokens = [t.strip() for t in tokens if t.strip()]
@@ -146,7 +149,7 @@ def format_html_structure(html: str) -> str:
     indent_level = 0
     indent_unit = "  " # スペース2個
     
-    # インデントを下げないタグ
+    # インデントを下げないタグ一覧
     void_tags = [
         'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 
         'link', 'meta', 'param', 'source', 'track', 'wbr', '!doctype', '?xml'
@@ -154,17 +157,22 @@ def format_html_structure(html: str) -> str:
     
     for token in tokens:
         # 終了タグ </...>
-        if re.match(r'^</', token):
+        if token.startswith('</'):
             indent_level = max(0, indent_level - 1)
             formatted_lines.append((indent_unit * indent_level) + token)
             
         # 開始タグ <...>
-        elif re.match(r'^<', token):
+        elif token.startswith('<'):
             # コメント if token.startswith('', '', result, flags=re.DOTALL)
+    # 複数の空白を1つに
     result = re.sub(r'[ \t]+', ' ', result)
-    result = '\n'.join(line.strip() for line in result.split('\n'))
+    # 行ごとの空白除去
+    lines = [line.strip() for line in result.split('\n')]
+    result = '\n'.join(lines)
+    # 空行削除
     result = re.sub(r'\n\s*\n', '\n', result)
     return result.strip()
+
 
 def compress_aggressive(html: str) -> str:
     result = html
@@ -174,6 +182,7 @@ def compress_aggressive(html: str) -> str:
     result = re.sub(r'>\s+<', '><', result)
     result = re.sub(r'\s*=\s*', '=', result)
     return result.strip()
+
 
 def compress_complete(html: str) -> str:
     result = html
@@ -185,12 +194,14 @@ def compress_complete(html: str) -> str:
     result = re.sub(r'<\s+', '<', result)
     return result.strip()
 
+
 def calculate_compression_ratio(original: str, compressed: str) -> tuple:
     original_size = len(original.encode('utf-8'))
     compressed_size = len(compressed.encode('utf-8'))
     reduction = original_size - compressed_size
     ratio = (reduction / original_size * 100) if original_size > 0 else 0
     return original_size, compressed_size, reduction, ratio
+
 
 def check_line_byte_limits(html: str, max_bytes: int = 800) -> tuple:
     lines = html.split('\n')
@@ -202,7 +213,10 @@ def check_line_byte_limits(html: str, max_bytes: int = 800) -> tuple:
     return violations, lines
 
 
-# --- メインエリア ---
+# ==========================================
+# メイン処理エリア
+# ==========================================
+
 col1, col2 = st.columns([1, 1])
 
 with col1:
@@ -225,7 +239,7 @@ with col2:
     if html_input:
         if st.button("🚀 処理を実行", type="primary", use_container_width=True):
             with st.spinner("処理中..."):
-                # 1. 圧縮・整形処理
+                # 1. 圧縮・整形処理の分岐
                 if "ヘッダーのみ" in compression_level:
                     compressed = compress_header_only(html_input)
                 elif "Smart版" in compression_level:
@@ -244,17 +258,21 @@ with col2:
                 st.session_state['compressed_html'] = compressed
                 st.session_state['original_html'] = html_input
         
+        # 結果表示
         if 'compressed_html' in st.session_state:
             compressed = st.session_state['compressed_html']
             original = st.session_state['original_html']
             orig_size, comp_size, reduction, ratio = calculate_compression_ratio(original, compressed)
             
             st.success("✅ 完了しました！")
-            metric_col1, metric_col2, metric_col3 = st.columns(3)
-            with metric_col1: st.metric("元のサイズ", f"{orig_size:,} bytes")
-            with metric_col2: st.metric("処理後", f"{comp_size:,} bytes", delta=f"-{reduction:,} bytes")
-            with metric_col3: st.metric("削減率", f"{ratio:.1f}%")
             
+            # メトリクス
+            m1, m2, m3 = st.columns(3)
+            with m1: st.metric("元のサイズ", f"{orig_size:,} bytes")
+            with m2: st.metric("処理後", f"{comp_size:,} bytes", delta=f"-{reduction:,} bytes")
+            with m3: st.metric("削減率", f"{ratio:.1f}%")
+            
+            # 制限チェック警告
             if activecore_mode:
                 violations, lines = check_line_byte_limits(compressed, max_bytes)
                 if violations:
@@ -267,6 +285,7 @@ with col2:
             with st.expander("📄 結果のHTMLを確認", expanded=True):
                 st.code(compressed[:1000] + "...", language="html")
             
+            # ダウンロード
             filename_suffix = "_ac" if activecore_mode else ""
             st.download_button(
                 label=f"💾 ダウンロード{'（AC対応）' if activecore_mode else ''}",
