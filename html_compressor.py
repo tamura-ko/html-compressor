@@ -5,7 +5,7 @@ from io import BytesIO
 st.set_page_config(page_title="HTML圧縮ツール", layout="wide", page_icon="🗜️")
 
 st.title("🗜️ HTML圧縮ツール")
-st.markdown("HTMLファイルを4段階の圧縮レベルで最適化します。")
+st.markdown("HTMLファイルを7段階の圧縮レベルで最適化します。")
 
 # サイドバーで圧縮レベル選択
 st.sidebar.header("⚙️ 設定")
