@@ -19,6 +19,26 @@ compression_level = st.sidebar.radio(
     ]
 )
 
+# アクティブコアモード追加
+st.sidebar.markdown("---")
+activecore_mode = st.sidebar.checkbox(
+    "📤 アクティブコアモード",
+    value=False,
+    help="1行800バイト制限に対応（MAツール用）"
+)
+
+if activecore_mode:
+    max_bytes = st.sidebar.number_input(
+        "1行の最大バイト数",
+        min_value=100,
+        max_value=2000,
+        value=800,
+        step=50,
+        help="アクティブコアは800バイト/行の制限があります"
+    )
+else:
+    max_bytes = 800
+
 # 説明を表示
 st.sidebar.markdown("---")
 st.sidebar.subheader("📖 圧縮レベルの違い")
@@ -43,6 +63,48 @@ st.sidebar.markdown("""
 - 全ての不要な空白削除
 - 最小サイズを実現
 """)
+
+
+def insert_line_breaks_for_activecore(html: str, max_bytes: int = 800) -> str:
+    """
+    アクティブコア対応：800バイト制限に対応するため、適切な位置で改行を挿入
+    タグの途中で切らないように配慮
+    """
+    lines = []
+    current_line = ""
+    
+    i = 0
+    while i < len(html):
+        char = html[i]
+        current_line += char
+        current_bytes = len(current_line.encode('utf-8'))
+        
+        # max_bytes - 50 バイトに達したら、次のタグ終了位置を探す
+        if current_bytes >= max_bytes - 50:
+            # 次の > を探す（タグの終わり）
+            next_tag_end = html.find('>', i)
+            
+            if next_tag_end != -1 and next_tag_end - i < 200:  # 200文字以内なら
+                # タグの終わりまで追加
+                remaining = html[i+1:next_tag_end+1]
+                current_line += remaining
+                i = next_tag_end
+                
+                # 改行を挿入
+                lines.append(current_line)
+                current_line = ""
+            else:
+                # タグの終わりが遠い場合、または見つからない場合は強制改行
+                lines.append(current_line)
+                current_line = ""
+        
+        i += 1
+    
+    # 残りを追加
+    if current_line:
+        lines.append(current_line)
+    
+    return '\n'.join(lines)
 
 
 def compress_header_only(html: str) -> str:
@@ -148,6 +210,21 @@ def calculate_compression_ratio(original: str, compressed: str) -> tuple:
     return original_size, compressed_size, reduction, ratio
 
 
+def check_line_byte_limits(html: str, max_bytes: int = 800) -> tuple:
+    """
+    各行のバイト数をチェックし、制限を超えている行を検出
+    """
+    lines = html.split('\n')
+    violations = []
+    
+    for i, line in enumerate(lines, 1):
+        line_bytes = len(line.encode('utf-8'))
+        if line_bytes > max_bytes:
+            violations.append((i, line_bytes, line[:100] + '...' if len(line) > 100 else line))
+    
+    return violations, lines
+
+
 # メインエリア
 col1, col2 = st.columns([1, 1])
 
@@ -199,6 +276,10 @@ with col2:
                 else:  # 完全圧縮
                     compressed = compress_complete(html_input)
                 
+                # アクティブコアモードの場合、800バイト制限対応
+                if activecore_mode:
+                    compressed = insert_line_breaks_for_activecore(compressed, max_bytes)
+                
                 # セッションステートに保存
                 st.session_state['compressed_html'] = compressed
                 st.session_state['original_html'] = html_input
@@ -222,15 +303,30 @@ with col2:
             with metric_col3:
                 st.metric("圧縮率", f"{ratio:.1f}%")
             
+            # アクティブコアモードの場合、行数制限チェック
+            if activecore_mode:
+                violations, lines = check_line_byte_limits(compressed, max_bytes)
+                
+                if violations:
+                    st.warning(f"⚠️ {len(violations)}行が{max_bytes}バイトを超えています")
+                    with st.expander("⚠️ 制限超過の行を表示"):
+                        for line_num, byte_count, preview in violations:
+                            st.text(f"行{line_num}: {byte_count}バイト - {preview}")
+                else:
+                    st.success(f"✅ 全ての行が{max_bytes}バイト以内です！")
+                
+                st.info(f"📊 総行数: {len(lines)}行")
+            
             # 圧縮後のHTMLプレビュー
             with st.expander("📄 圧縮後のHTMLを表示", expanded=True):
                 st.code(compressed[:1000] + ("..." if len(compressed) > 1000 else ""), language="html")
             
             # ダウンロードボタン
+            filename_suffix = "_ac" if activecore_mode else ""
             st.download_button(
-                label="💾 圧縮HTMLをダウンロード",
+                label=f"💾 圧縮HTMLをダウンロード{'（AC対応）' if activecore_mode else ''}",
                 data=compressed.encode('utf-8'),
-                file_name="compressed.html",
+                file_name=f"compressed{filename_suffix}.html",
                 mime="text/html",
                 use_container_width=True
             )
@@ -247,9 +343,10 @@ with col2:
 
 # フッター
 st.markdown("---")
-st.markdown("""
+st.markdown(f"""
 <div style='text-align: center; color: gray; font-size: 0.9em;'>
     <p>💡 <b>Tips:</b> Smart版は可読性とサイズのバランスが良く、通常使用に最適です</p>
     <p>⚠️ 圧縮後は必ず動作確認を行ってください</p>
+    {'<p>📤 <b>アクティブコアモード:</b> 1行800バイト制限に対応した改行を自動挿入</p>' if activecore_mode else ''}
 </div>
 """, unsafe_allow_html=True)
