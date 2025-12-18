@@ -2,12 +2,13 @@ import streamlit as st
 import re
 from io import BytesIO
 
+# ページ設定
 st.set_page_config(page_title="HTML圧縮ツール", layout="wide", page_icon="🗜️")
 
 st.title("🗜️ HTML圧縮ツール")
 st.markdown("HTMLファイルを最適化します。MAツール制限（1行800バイト）にも対応。")
 
-# サイドバーで圧縮レベル選択
+# --- サイドバー設定 ---
 st.sidebar.header("⚙️ 設定")
 compression_level = st.sidebar.radio(
     "圧縮レベルを選択",
@@ -20,7 +21,6 @@ compression_level = st.sidebar.radio(
     ]
 )
 
-# アクティブコアモード追加
 st.sidebar.markdown("---")
 activecore_mode = st.sidebar.checkbox(
     "📤 アクティブコアモード",
@@ -40,7 +40,6 @@ if activecore_mode:
 else:
     max_bytes = 800
 
-# 説明を表示
 st.sidebar.markdown("---")
 st.sidebar.subheader("📖 圧縮レベルの違い")
 st.sidebar.markdown("""
@@ -56,14 +55,14 @@ st.sidebar.markdown("""
 **完全圧縮**
 - 全ての不要な空白削除、最小サイズ
 
-**整形モード（New!）**
+**整形モード**
 - 余分なインデントを削除
 - 階層構造（＞の形）を維持
 - 編集しやすく、かつ軽くする
 """)
 
 
-# --- ヘルパー関数群（安全な改行挿入ロジック） ---
+# --- ヘルパー関数：安全な改行挿入（ACモード用） ---
 
 def split_line_safely(line: str, max_bytes: int) -> list:
     """1行が長い場合に、タグの区切り目（>）で安全に分割する。"""
@@ -81,6 +80,7 @@ def split_line_safely(line: str, max_bytes: int) -> list:
     i = 0
     while i < line_len:
         char = line[i]
+        # クォート管理
         if char in ('"', "'"):
             if not in_quote:
                 in_quote = True
@@ -88,6 +88,7 @@ def split_line_safely(line: str, max_bytes: int) -> list:
             elif char == quote_char:
                 in_quote = False
         
+        # 安全な改行ポイント（>）を探す
         if char == '>' and not in_quote:
             last_safe_split_index = i + 1
         
@@ -100,6 +101,7 @@ def split_line_safely(line: str, max_bytes: int) -> list:
                 current_start = last_safe_split_index
                 i = current_start - 1
             else:
+                # 安全な場所がない場合は強制分割
                 split_pos = i
                 result_lines.append(line[current_start:split_pos])
                 current_start = split_pos
@@ -132,13 +134,11 @@ def insert_line_breaks_for_activecore(html: str, max_bytes: int = 800) -> str:
     return '\n'.join(processed_lines)
 
 
-# --- 新機能：整形（インデント最適化）ロジック ---
+# --- ヘルパー関数：整形（インデント最適化） ---
 
 def format_html_structure(html: str) -> str:
-    """
-    HTMLの構造を解析し、インデントを「スペース2個」に統一して再構築する。
-    """
-    # タグとテキストに分解
+    """HTMLの構造を解析し、インデントを再構築する。"""
+    # HTMLをトークンに分解
     tokens = re.split(r'(<[^>]+>)', html)
     tokens = [t.strip() for t in tokens if t.strip()]
     
@@ -146,7 +146,7 @@ def format_html_structure(html: str) -> str:
     indent_level = 0
     indent_unit = "  " # スペース2個
     
-    # インデントを下げないタグ（Void Elements + doctype）
+    # インデントを下げないタグ
     void_tags = {
         'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 
         'link', 'meta', 'param', 'source', 'track', 'wbr', '!doctype', '?xml'
@@ -233,7 +233,6 @@ with col2:
                 elif "Aggressive版" in compression_level:
                     compressed = compress_aggressive(html_input)
                 elif "整形モード" in compression_level:
-                    # New: インデントを再構築
                     compressed = format_html_structure(html_input)
                 else:
                     compressed = compress_complete(html_input)
