@@ -67,44 +67,65 @@ st.sidebar.markdown("""
 
 def insert_line_breaks_for_activecore(html: str, max_bytes: int = 800) -> str:
     """
-    アクティブコア対応：800バイト制限に対応するため、適切な位置で改行を挿入
-    タグの途中で切らないように配慮
+    アクティブコア対応：800バイトを超える行だけを分割
+    短い行はそのまま維持
     """
-    lines = []
-    current_line = ""
+    lines = html.split('\n')
+    result_lines = []
     
-    i = 0
-    while i < len(html):
-        char = html[i]
-        current_line += char
-        current_bytes = len(current_line.encode('utf-8'))
+    for line in lines:
+        line_bytes = len(line.encode('utf-8'))
         
-        # max_bytes - 50 バイトに達したら、次のタグ終了位置を探す
-        if current_bytes >= max_bytes - 50:
-            # 次の > を探す（タグの終わり）
-            next_tag_end = html.find('>', i)
+        # 800バイト以下ならそのまま
+        if line_bytes <= max_bytes:
+            result_lines.append(line)
+            continue
+        
+        # 800バイトを超える場合のみ分割
+        current_chunk = ""
+        i = 0
+        
+        while i < len(line):
+            char = line[i]
+            test_chunk = current_chunk + char
+            test_bytes = len(test_chunk.encode('utf-8'))
             
-            if next_tag_end != -1 and next_tag_end - i < 200:  # 200文字以内なら
-                # タグの終わりまで追加
-                remaining = html[i+1:next_tag_end+1]
-                current_line += remaining
-                i = next_tag_end
+            # max_bytes-100 に達したら分割ポイントを探す
+            if test_bytes >= max_bytes - 100:
+                # 次の > を探す（タグの終わり）
+                next_tag_end = line.find('>', i)
                 
-                # 改行を挿入
-                lines.append(current_line)
-                current_line = ""
+                if next_tag_end != -1 and (next_tag_end - i) < 100:
+                    # タグの終わりまで含める
+                    current_chunk += line[i:next_tag_end + 1]
+                    i = next_tag_end + 1
+                    
+                    # チャンクを保存して次へ
+                    result_lines.append(current_chunk)
+                    current_chunk = ""
+                    continue
+                else:
+                    # タグの終わりが見つからない場合、安全な位置で分割
+                    # スペースを探す
+                    last_space = current_chunk.rfind(' ')
+                    if last_space > len(current_chunk) * 0.8:  # 後半80%以降にスペースがあれば
+                        result_lines.append(current_chunk[:last_space])
+                        current_chunk = current_chunk[last_space + 1:] + char
+                        i += 1
+                    else:
+                        # スペースもない場合は強制分割
+                        result_lines.append(current_chunk)
+                        current_chunk = char
+                        i += 1
             else:
-                # タグの終わりが遠い場合、または見つからない場合は強制改行
-                lines.append(current_line)
-                current_line = ""
+                current_chunk += char
+                i += 1
         
-        i += 1
+        # 残りを追加
+        if current_chunk:
+            result_lines.append(current_chunk)
     
-    # 残りを追加
-    if current_line:
-        lines.append(current_line)
-    
-    return '\n'.join(lines)
+    return '\n'.join(result_lines)
 
 
 def compress_header_only(html: str) -> str:
