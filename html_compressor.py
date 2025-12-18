@@ -3,14 +3,16 @@ import re
 from io import BytesIO
 
 # ==========================================
-# 1. ページ設定とUI
+# ページ基本設定
 # ==========================================
 st.set_page_config(page_title="HTML圧縮ツール", layout="wide", page_icon="🗜️")
 
 st.title("🗜️ HTML圧縮ツール")
 st.markdown("HTMLファイルを最適化します。MAツール制限（1行800バイト）にも対応。")
 
-# --- サイドバー設定 ---
+# ==========================================
+# サイドバー設定
+# ==========================================
 st.sidebar.header("⚙️ 設定")
 
 compression_level = st.sidebar.radio(
@@ -66,11 +68,12 @@ st.sidebar.markdown("""
 
 
 # ==========================================
-# 2. ロジック関数群（インデントエラー対策済み）
+# ロジック関数群
 # ==========================================
 
-def split_line_safely(line: str, max_bytes: int) -> list:
+def split_line_safely(line, max_bytes):
     """1行が長い場合に、タグの区切り目（>）で安全に分割する"""
+    # バイト数が制限内なら何もしない
     if len(line.encode('utf-8')) <= max_bytes:
         return [line]
 
@@ -85,8 +88,9 @@ def split_line_safely(line: str, max_bytes: int) -> list:
     i = 0
     while i < line_len:
         char = line[i]
+        
         # クォート管理
-        if char in ('"', "'"):
+        if char == '"' or char == "'":
             if not in_quote:
                 in_quote = True
                 quote_char = char
@@ -97,30 +101,35 @@ def split_line_safely(line: str, max_bytes: int) -> list:
         if char == '>' and not in_quote:
             last_safe_split_index = i + 1
         
+        # 現在のチャンクサイズ確認
         current_chunk = line[current_start:i+1]
         chunk_bytes = len(current_chunk.encode('utf-8'))
         
+        # 制限を超えた場合の処理
         if chunk_bytes > max_bytes:
             if last_safe_split_index > current_start:
+                # 安全な場所で切る
                 result_lines.append(line[current_start:last_safe_split_index])
                 current_start = last_safe_split_index
                 i = current_start - 1
             else:
-                # 安全な場所がない場合は強制分割
+                # 強制的に切る
                 split_pos = i
                 result_lines.append(line[current_start:split_pos])
                 current_start = split_pos
                 i -= 1
             last_safe_split_index = -1
+        
         i += 1
     
+    # 残りを追加
     if current_start < line_len:
         result_lines.append(line[current_start:])
         
     return result_lines
 
 
-def insert_line_breaks_for_activecore(html: str, max_bytes: int = 800) -> str:
+def insert_line_breaks_for_activecore(html, max_bytes=800):
     """アクティブコア対応：800バイトを超える行だけを処理する"""
     original_lines = html.split('\n')
     processed_lines = []
@@ -139,10 +148,11 @@ def insert_line_breaks_for_activecore(html: str, max_bytes: int = 800) -> str:
     return '\n'.join(processed_lines)
 
 
-def format_html_structure(html: str) -> str:
+def format_html_structure(html):
     """HTMLの構造を解析し、インデントを再構築する（整形モード）"""
-    # 構造を単純化してインデントエラーを防ぐ
+    # HTMLをタグとテキストに分解
     tokens = re.split(r'(<[^>]+>)', html)
+    # 空白のみのトークンを除去
     tokens = [t.strip() for t in tokens if t.strip()]
     
     formatted_lines = []
@@ -156,17 +166,17 @@ def format_html_structure(html: str) -> str:
     ]
     
     for token in tokens:
-        # 1. 終了タグの場合
+        # 1. 終了タグ (例: </div>)
         if token.startswith('</'):
-            indent_level = max(0, indent_level - 1)
+            if indent_level > 0:
+                indent_level -= 1
             formatted_lines.append((indent_unit * indent_level) + token)
-            continue
-
-        # 2. コメントタグの場合
-        if token.startswith('', '', result, flags=re.DOTALL)
-    # 空白圧縮
+            
+        # 2. コメントタグ (例: )
+        elif token.startswith('', '', result, flags=re.DOTALL)
+    # 連続する空白を1つに
     result = re.sub(r'[ \t]+', ' ', result)
-    # 行整形
+    # 各行の不要な空白削除
     lines = [line.strip() for line in result.split('\n')]
     result = '\n'.join(lines)
     # 空行削除
@@ -174,7 +184,7 @@ def format_html_structure(html: str) -> str:
     return result.strip()
 
 
-def compress_aggressive(html: str) -> str:
+def compress_aggressive(html):
     result = html
     result = re.sub(r'', '', result, flags=re.DOTALL)
     result = result.replace('\n', '').replace('\r', '').replace('\t', '')
@@ -184,7 +194,7 @@ def compress_aggressive(html: str) -> str:
     return result.strip()
 
 
-def compress_complete(html: str) -> str:
+def compress_complete(html):
     result = html
     result = re.sub(r'', '', result, flags=re.DOTALL)
     result = re.sub(r'\s+', ' ', result)
@@ -195,26 +205,27 @@ def compress_complete(html: str) -> str:
     return result.strip()
 
 
-def calculate_compression_ratio(original: str, compressed: str) -> tuple:
-    original_size = len(original.encode('utf-8'))
-    compressed_size = len(compressed.encode('utf-8'))
-    reduction = original_size - compressed_size
-    ratio = (reduction / original_size * 100) if original_size > 0 else 0
-    return original_size, compressed_size, reduction, ratio
+def calculate_stats(original, compressed):
+    orig_size = len(original.encode('utf-8'))
+    comp_size = len(compressed.encode('utf-8'))
+    reduction = orig_size - comp_size
+    ratio = (reduction / orig_size * 100) if orig_size > 0 else 0
+    return orig_size, comp_size, reduction, ratio
 
 
-def check_line_byte_limits(html: str, max_bytes: int = 800) -> tuple:
+def check_limits(html, max_bytes):
     lines = html.split('\n')
     violations = []
     for i, line in enumerate(lines, 1):
         line_bytes = len(line.encode('utf-8'))
         if line_bytes > max_bytes:
-            violations.append((i, line_bytes, line[:100] + '...' if len(line) > 100 else line))
-    return violations, lines
+            preview = line[:100] + '...' if len(line) > 100 else line
+            violations.append((i, line_bytes, preview))
+    return violations
 
 
 # ==========================================
-# 3. メイン処理エリア
+# メイン処理エリア
 # ==========================================
 
 col1, col2 = st.columns([1, 1])
@@ -225,9 +236,9 @@ with col1:
     html_input = ""
     
     if input_method == "テキスト入力":
-        html_input = st.text_area("HTMLコードを貼り付けてください", height=400, placeholder="<!DOCTYPE html>...")
+        html_input = st.text_area("HTMLコード", height=400, placeholder="<!DOCTYPE html>...")
     else:
-        uploaded_file = st.file_uploader("HTMLファイルをアップロード", type=['html', 'htm'])
+        uploaded_file = st.file_uploader("HTMLファイル", type=['html', 'htm'])
         if uploaded_file is not None:
             html_input = uploaded_file.read().decode('utf-8')
             st.success(f"✅ {uploaded_file.name} を読み込みました")
@@ -239,7 +250,7 @@ with col2:
     if html_input:
         if st.button("🚀 処理を実行", type="primary", use_container_width=True):
             with st.spinner("処理中..."):
-                # 分岐処理
+                # 1. 圧縮・整形処理
                 if "ヘッダーのみ" in compression_level:
                     compressed = compress_header_only(html_input)
                 elif "Smart版" in compression_level:
@@ -251,20 +262,19 @@ with col2:
                 else:
                     compressed = compress_complete(html_input)
                 
-                # アクティブコア制限
+                # 2. アクティブコア制限
                 if activecore_mode:
-                    compressed = insert_line_breaks_for_activecore(compressed, max_bytes)
+                    compressed = insert_line_breaks_for_activecore(compressed, int(max_bytes))
                 
                 st.session_state['compressed_html'] = compressed
                 st.session_state['original_html'] = html_input
         
-        # 結果表示
         if 'compressed_html' in st.session_state:
             compressed = st.session_state['compressed_html']
             original = st.session_state['original_html']
-            orig_size, comp_size, reduction, ratio = calculate_compression_ratio(original, compressed)
+            orig_size, comp_size, reduction, ratio = calculate_stats(original, compressed)
             
-            st.success("✅ 完了しました！")
+            st.success("✅ 完了しました")
             
             # メトリクス
             m1, m2, m3 = st.columns(3)
@@ -272,9 +282,9 @@ with col2:
             with m2: st.metric("処理後", f"{comp_size:,} bytes", delta=f"-{reduction:,} bytes")
             with m3: st.metric("削減率", f"{ratio:.1f}%")
             
-            # 制限チェック警告
+            # 制限チェック
             if activecore_mode:
-                violations, lines = check_line_byte_limits(compressed, max_bytes)
+                violations = check_limits(compressed, int(max_bytes))
                 if violations:
                     st.warning(f"⚠️ {len(violations)}行が{max_bytes}バイトを超えています")
                     with st.expander("詳細"):
@@ -282,10 +292,9 @@ with col2:
                 else:
                     st.success(f"✅ 全行 {max_bytes}バイト以内です")
             
-            with st.expander("📄 結果のHTMLを確認", expanded=True):
+            with st.expander("📄 結果のHTML", expanded=True):
                 st.code(compressed[:1000] + "...", language="html")
             
-            # ダウンロード
             filename_suffix = "_ac" if activecore_mode else ""
             st.download_button(
                 label=f"💾 ダウンロード{'（AC対応）' if activecore_mode else ''}",
