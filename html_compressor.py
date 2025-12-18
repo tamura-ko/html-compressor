@@ -147,10 +147,10 @@ def format_html_structure(html: str) -> str:
     indent_unit = "  " # スペース2個
     
     # インデントを下げないタグ
-    void_tags = {
+    void_tags = [
         'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 
         'link', 'meta', 'param', 'source', 'track', 'wbr', '!doctype', '?xml'
-    }
+    ]
     
     for token in tokens:
         # 終了タグ </...>
