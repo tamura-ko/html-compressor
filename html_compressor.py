@@ -5,7 +5,7 @@ from io import BytesIO
 st.set_page_config(page_title="HTML圧縮ツール", layout="wide", page_icon="🗜️")
 
 st.title("🗜️ HTML圧縮ツール")
-st.markdown("HTMLファイルを4段階の圧縮レベルで最適化します。")
+st.markdown("HTMLファイルを最適化します。MAツール制限（1行800バイト）にも対応。")
 
 # サイドバーで圧縮レベル選択
 st.sidebar.header("⚙️ 設定")
@@ -15,7 +15,8 @@ compression_level = st.sidebar.radio(
         "1️⃣ ヘッダーのみ圧縮",
         "2️⃣ Smart版（推奨）",
         "3️⃣ Aggressive版",
-        "4️⃣ 完全圧縮"
+        "4️⃣ 完全圧縮",
+        "5️⃣ 整形モード（インデント最適化）"  # 新機能
     ]
 )
 
@@ -44,34 +45,28 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("📖 圧縮レベルの違い")
 st.sidebar.markdown("""
 **ヘッダーのみ圧縮**
-- `<head>`内のみ圧縮
-- `<body>`は元のまま
-- デバッグ時に便利
+- `<head>`内のみ圧縮、他はそのまま
 
 **Smart版（推奨）**
-- 適度に圧縮
-- 改行・スペースを削減
-- ある程度の可読性を維持
+- 適度に圧縮、可読性を維持
 
 **Aggressive版**
-- 積極的に圧縮
-- コメント削除
-- 可読性より容量優先
+- コメント削除、改行削除
 
 **完全圧縮**
-- 最大限に圧縮
-- 全ての不要な空白削除
-- 最小サイズを実現
+- 全ての不要な空白削除、最小サイズ
+
+**整形モード（New!）**
+- 余分なインデントを削除
+- 階層構造（＞の形）を維持
+- 編集しやすく、かつ軽くする
 """)
 
 
 # --- ヘルパー関数群（安全な改行挿入ロジック） ---
 
 def split_line_safely(line: str, max_bytes: int) -> list:
-    """
-    1行が長い場合に、タグの区切り目（>）で安全に分割する。
-    クォート内の > は無視するロジックを実装。
-    """
+    """1行が長い場合に、タグの区切り目（>）で安全に分割する。"""
     if len(line.encode('utf-8')) <= max_bytes:
         return [line]
 
@@ -79,18 +74,13 @@ def split_line_safely(line: str, max_bytes: int) -> list:
     current_start = 0
     line_len = len(line)
     
-    # 状態管理用
     in_quote = False
     quote_char = ''
-    
-    # 前回の安全な分割ポイント（タグの閉じ括弧 > の直後）
     last_safe_split_index = -1
     
     i = 0
     while i < line_len:
         char = line[i]
-        
-        # クォートの処理（属性値の中の > で切らないようにする）
         if char in ('"', "'"):
             if not in_quote:
                 in_quote = True
@@ -98,40 +88,25 @@ def split_line_safely(line: str, max_bytes: int) -> list:
             elif char == quote_char:
                 in_quote = False
         
-        # タグの区切り目（>）を探す（クォート外のみ）
         if char == '>' and not in_quote:
-            # ここは安全に切れる場所
             last_safe_split_index = i + 1
         
-        # 現在のチャンクのバイト数を確認
         current_chunk = line[current_start:i+1]
         chunk_bytes = len(current_chunk.encode('utf-8'))
         
-        # 制限を超えそうになったら分割を実行
         if chunk_bytes > max_bytes:
-            # 安全な分割ポイントが見つかっている場合
             if last_safe_split_index > current_start:
                 result_lines.append(line[current_start:last_safe_split_index])
                 current_start = last_safe_split_index
-                
-                # インデックスを戻す必要はないが、次のループのために調整
-                # (last_safe_split_index から再開しているので i はその先へ進める)
-                i = current_start - 1 # ループの最後で +1 されるので
+                i = current_start - 1
             else:
-                # 安全な場所がない（巨大な1つのタグやテキスト）
-                # 仕方ないので強制的に現在の位置で切る（文字化け回避のため文字単位）
-                # ただし、最後の1文字を追加するとオーバーするので、1文字手前で切る
                 split_pos = i
                 result_lines.append(line[current_start:split_pos])
                 current_start = split_pos
-                i -= 1 # 同じ文字を次の行で再処理
-            
-            # 分割ポイントをリセット
+                i -= 1
             last_safe_split_index = -1
-            
         i += 1
     
-    # 残りの部分を追加
     if current_start < line_len:
         result_lines.append(line[current_start:])
         
@@ -139,76 +114,77 @@ def split_line_safely(line: str, max_bytes: int) -> list:
 
 
 def insert_line_breaks_for_activecore(html: str, max_bytes: int = 800) -> str:
-    """
-    アクティブコア対応（最終版）：
-    既存の改行構造を維持しつつ、800バイトを超える行だけを処理する。
-    """
-    # まず既存の行に分ける（Smart版などの整形を壊さないため）
+    """アクティブコア対応：800バイトを超える行だけを処理する。"""
     original_lines = html.split('\n')
     processed_lines = []
     
     for line in original_lines:
-        # 行末の空白除去（不具合防止）
-        line = line.rstrip()
-        if not line:
+        # 整形モードなどで作られた行頭スペースは維持したいが、判定のために一瞬除外して計算するか？
+        # いや、インデント込みで800バイト超えたらアウトなので、そのままチェックする
+        line_clean = line.rstrip() 
+        if not line_clean:
             continue
             
-        # バイト数チェック
-        if len(line.encode('utf-8')) <= max_bytes:
-            # 制限内ならそのまま（ここが重要！余計な詰め込みをしない）
-            processed_lines.append(line)
+        if len(line_clean.encode('utf-8')) <= max_bytes:
+            processed_lines.append(line_clean)
         else:
-            # 制限オーバーの行だけ、安全に分割して追加
-            splitted = split_line_safely(line, max_bytes)
+            splitted = split_line_safely(line_clean, max_bytes)
             processed_lines.extend(splitted)
             
     return '\n'.join(processed_lines)
 
 
-# --- 圧縮ロジック関数群 ---
+# --- 新機能：整形（インデント最適化）ロジック ---
 
-def compress_header_only(html: str) -> str:
-    """ヘッダーのみ圧縮"""
-    head_match = re.search(r'<head>(.*?)</head>', html, re.DOTALL | re.IGNORECASE)
-    if not head_match:
-        return html
-    head_content = head_match.group(1)
-    compressed_head = re.sub(r'\s+', ' ', head_content)
-    compressed_head = re.sub(r'>\s+<', '><', compressed_head)
-    compressed_head = compressed_head.strip()
-    result = html.replace(head_match.group(0), f'<head>{compressed_head}</head>')
-    return result
-
-def compress_smart(html: str) -> str:
-    """Smart版圧縮 - 適度な圧縮"""
-    result = html
-    # コメント削除（条件付きコメントは残す）
-    result = re.sub(r'', '', result, flags=re.DOTALL)
-    # 複数の空白を1つに
+def format_html_structure(html: str) -> str:
+    """
+    HTMLの構造を解析し、インデントを「スペース2個」に統一して再構築する。
+    無駄な深すぎるインデントを削除し、容量を削減しつつ可読性を保つ。
+    """
+    # 1. まず余分な空白や改行を除去して1行にするイメージで処理（Smart圧縮に近い状態にする）
+    # ただし、コンテンツ内の改行は守りたいので、タグベースで分解する
+    
+    # コメントなどは残す
+    
+    # タグとテキストに分解 (<tag> または </tag> または テキスト)
+    tokens = re.split(r'(<[^>]+>)', html)
+    tokens = [t.strip() for t in tokens if t.strip()]
+    
+    formatted_lines = []
+    indent_level = 0
+    indent_unit = "  " # スペース2個（容量節約のため少なめに）
+    
+    # インデントを下げないタグ（Void Elements）
+    void_tags = {
+        'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 
+        'link', 'meta', 'param', 'source', 'track', 'wbr', '!doctype'
+    }
+    
+    for token in tokens:
+        # 終了タグ (例: </div>)
+        if re.match(r'^</', token):
+            indent_level = max(0, indent_level - 1)
+            formatted_lines.append((indent_unit * indent_level) + token)
+            
+        # 開始タグ (例: <div ...>)
+        elif re.match(r'^<', token):
+            # コメントの場合はインデントそのまま
+            if token.startswith('', '', result, flags=re.DOTALL)
     result = re.sub(r'[ \t]+', ' ', result)
-    # タグ間の改行を削除（ただし、preタグ内は除く簡易実装）
-    # Smart版は可読性を残すため、あえて >\n< をすべて >< にはしない
-    # 行頭・行末の空白削除のみ行う
     result = '\n'.join(line.strip() for line in result.split('\n'))
-    # 空行を削除
     result = re.sub(r'\n\s*\n', '\n', result)
     return result.strip()
 
 def compress_aggressive(html: str) -> str:
-    """Aggressive版 - 積極的な圧縮"""
     result = html
     result = re.sub(r'', '', result, flags=re.DOTALL)
-    result = result.replace('\n', '')
-    result = result.replace('\r', '')
-    result = result.replace('\t', '')
+    result = result.replace('\n', '').replace('\r', '').replace('\t', '')
     result = re.sub(r' +', ' ', result)
     result = re.sub(r'>\s+<', '><', result)
-    # 属性値前後の不要なスペース削除（破壊的変更に注意）
     result = re.sub(r'\s*=\s*', '=', result)
     return result.strip()
 
 def compress_complete(html: str) -> str:
-    """完全圧縮 - 最大限の圧縮"""
     result = html
     result = re.sub(r'', '', result, flags=re.DOTALL)
     result = re.sub(r'\s+', ' ', result)
@@ -216,8 +192,6 @@ def compress_complete(html: str) -> str:
     result = re.sub(r'\s*=\s*', '=', result)
     result = re.sub(r'\s+>', '>', result)
     result = re.sub(r'<\s+', '<', result)
-    result = re.sub(r';\s+', ';', result)
-    result = re.sub(r',\s+', ',', result)
     return result.strip()
 
 def calculate_compression_ratio(original: str, compressed: str) -> tuple:
@@ -246,7 +220,7 @@ with col1:
     html_input = ""
     
     if input_method == "テキスト入力":
-        html_input = st.text_area("HTMLコードを貼り付けてください", height=400, placeholder="<!DOCTYPE html>\n<html>...")
+        html_input = st.text_area("HTMLコードを貼り付けてください", height=400, placeholder="<!DOCTYPE html>...")
     else:
         uploaded_file = st.file_uploader("HTMLファイルをアップロード", type=['html', 'htm'])
         if uploaded_file is not None:
@@ -258,19 +232,22 @@ with col1:
 with col2:
     st.subheader("📤 出力")
     if html_input:
-        if st.button("🚀 圧縮を実行", type="primary", use_container_width=True):
-            with st.spinner("圧縮中..."):
-                # 1. まず圧縮
+        if st.button("🚀 処理を実行", type="primary", use_container_width=True):
+            with st.spinner("処理中..."):
+                # 1. 圧縮・整形処理
                 if "ヘッダーのみ" in compression_level:
                     compressed = compress_header_only(html_input)
                 elif "Smart版" in compression_level:
                     compressed = compress_smart(html_input)
                 elif "Aggressive版" in compression_level:
                     compressed = compress_aggressive(html_input)
+                elif "整形モード" in compression_level:
+                    # New: インデントを再構築
+                    compressed = format_html_structure(html_input)
                 else:
                     compressed = compress_complete(html_input)
                 
-                # 2. その後、アクティブコア制限を適用（既存の改行は極力維持）
+                # 2. アクティブコア制限（必要な場合のみ改行挿入）
                 if activecore_mode:
                     compressed = insert_line_breaks_for_activecore(compressed, max_bytes)
                 
@@ -282,11 +259,11 @@ with col2:
             original = st.session_state['original_html']
             orig_size, comp_size, reduction, ratio = calculate_compression_ratio(original, compressed)
             
-            st.success("✅ 圧縮完了！")
+            st.success("✅ 完了しました！")
             metric_col1, metric_col2, metric_col3 = st.columns(3)
             with metric_col1: st.metric("元のサイズ", f"{orig_size:,} bytes")
-            with metric_col2: st.metric("圧縮後", f"{comp_size:,} bytes", delta=f"-{reduction:,} bytes")
-            with metric_col3: st.metric("圧縮率", f"{ratio:.1f}%")
+            with metric_col2: st.metric("処理後", f"{comp_size:,} bytes", delta=f"-{reduction:,} bytes")
+            with metric_col3: st.metric("削減率", f"{ratio:.1f}%")
             
             if activecore_mode:
                 violations, lines = check_line_byte_limits(compressed, max_bytes)
@@ -296,27 +273,18 @@ with col2:
                          for ln, b, t in violations: st.text(f"行{ln}: {b}B - {t}")
                 else:
                     st.success(f"✅ 全行 {max_bytes}バイト以内です")
-                st.info(f"📊 総行数: {len(lines)}行")
             
-            with st.expander("📄 圧縮後のHTML", expanded=True):
+            with st.expander("📄 結果のHTMLを確認", expanded=True):
                 st.code(compressed[:1000] + "...", language="html")
             
             filename_suffix = "_ac" if activecore_mode else ""
             st.download_button(
                 label=f"💾 ダウンロード{'（AC対応）' if activecore_mode else ''}",
                 data=compressed.encode('utf-8'),
-                file_name=f"compressed{filename_suffix}.html",
+                file_name=f"processed{filename_suffix}.html",
                 mime="text/html",
                 use_container_width=True
             )
             st.text_area("コピー用", value=compressed, height=150)
     else:
         st.info("👈 左側にHTMLを入力してください")
-
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: gray; font-size: 0.9em;'>
-    <p>💡 <b>Tips:</b> 「Smart版」+「アクティブコアモード」の組み合わせが最もバランスが良くおすすめです。</p>
-    <p>📤 <b>アクティブコアモード:</b> 800バイトを超える行のみ、タグの区切り目で安全に改行します。</p>
-</div>
-""", unsafe_allow_html=True)
