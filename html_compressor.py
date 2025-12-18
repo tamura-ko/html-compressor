@@ -16,7 +16,8 @@ compression_level = st.sidebar.radio(
         "2️⃣ Smart版（推奨）",
         "3️⃣ Aggressive版",
         "4️⃣ 完全圧縮",
-        "5️⃣ インデント保持版（NEW）"
+        "5️⃣ インデント保持版",
+        "6️⃣ ハイブリッド版（推奨★）"
     ]
 )
 
@@ -64,10 +65,15 @@ st.sidebar.markdown("""
 - 全ての不要な空白削除
 - 最小サイズを実現
 
-**インデント保持版（NEW）**
+**インデント保持版**
 - 階層構造（>の形）を保持
 - 左側の余分なスペースのみ削除
-- 可読性とサイズのバランス重視
+- 可読性重視（圧縮効果は低め）
+
+**ハイブリッド版（推奨★）**
+- `<head>`→完全圧縮（CSS等）
+- `<body>`→インデント保持
+- 圧縮効果と可読性を両立
 """)
 
 
@@ -259,6 +265,50 @@ def compress_preserve_indent(html: str) -> str:
     
     return '\n'.join(result_lines)
 
+def compress_hybrid(html: str) -> str:
+    """ハイブリッド版 - ヘッダーは完全圧縮、ボディはインデント保持"""
+    # <head>と<body>を分離
+    head_match = re.search(r'(<head>.*?</head>)', html, re.DOTALL | re.IGNORECASE)
+    body_match = re.search(r'(<body.*?>.*?</body>)', html, re.DOTALL | re.IGNORECASE)
+    
+    if not head_match and not body_match:
+        # head/bodyがない場合は全体をインデント保持で処理
+        return compress_preserve_indent(html)
+    
+    # 各パーツを抽出
+    before_head = html[:head_match.start()] if head_match else ""
+    head_content = head_match.group(1) if head_match else ""
+    between = html[head_match.end():body_match.start()] if (head_match and body_match) else ""
+    body_content = body_match.group(1) if body_match else ""
+    after_body = html[body_match.end():] if body_match else ""
+    
+    # ヘッダーは完全圧縮（ゴリゴリ削る）
+    if head_content:
+        compressed_head = re.sub(r'<!--(?!\[if).*?-->', '', head_content, flags=re.DOTALL)
+        compressed_head = re.sub(r'\s+', ' ', compressed_head)
+        compressed_head = re.sub(r'>\s+<', '><', compressed_head)
+        compressed_head = re.sub(r'\s*=\s*', '=', compressed_head)
+        head_content = compressed_head.strip()
+    
+    # ボディはインデント保持
+    if body_content:
+        body_content = compress_preserve_indent(body_content)
+    
+    # 結合
+    result_parts = []
+    if before_head.strip():
+        result_parts.append(before_head.strip())
+    if head_content:
+        result_parts.append(head_content)
+    if between.strip():
+        result_parts.append(between.strip())
+    if body_content:
+        result_parts.append(body_content)
+    if after_body.strip():
+        result_parts.append(after_body.strip())
+    
+    return '\n'.join(result_parts)
+
 def calculate_compression_ratio(original: str, compressed: str) -> tuple:
     original_size = len(original.encode('utf-8'))
     compressed_size = len(compressed.encode('utf-8'))
@@ -308,6 +358,8 @@ with col2:
                     compressed = compress_aggressive(html_input)
                 elif "インデント保持版" in compression_level:
                     compressed = compress_preserve_indent(html_input)
+                elif "ハイブリッド版" in compression_level:
+                    compressed = compress_hybrid(html_input)
                 else:
                     compressed = compress_complete(html_input)
                 
