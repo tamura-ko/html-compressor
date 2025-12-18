@@ -1,6 +1,5 @@
 import streamlit as st
 import re
-from io import BytesIO
 
 # ==========================================
 # 1. 初期設定とUIレイアウト
@@ -43,7 +42,7 @@ if use_activecore_limit:
         step=50
     )
 else:
-    byte_limit = 800  # デフォルト値
+    byte_limit = 800
 
 st.sidebar.markdown("---")
 st.sidebar.info("""
@@ -55,7 +54,7 @@ st.sidebar.info("""
 
 
 # ==========================================
-# 2. ロジック関数群（堅牢化版）
+# 2. ロジック関数群
 # ==========================================
 
 def get_byte_len(text):
