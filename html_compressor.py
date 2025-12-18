@@ -65,68 +65,108 @@ st.sidebar.markdown("""
 """)
 
 
+# --- ヘルパー関数群 ---
+
+def split_string_by_bytes(s: str, limit: int) -> list:
+    """文字列を指定バイト数以下で強制分割（マルチバイト文字対応）"""
+    chunks = []
+    current = ""
+    for char in s:
+        # 次の文字を足すと超えるかチェック
+        if len((current + char).encode('utf-8')) > limit:
+            chunks.append(current)
+            current = char
+        else:
+            current += char
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def split_long_token(text: str, max_bytes: int) -> list:
+    """
+    制限を超える巨大なトークン（長い属性を持つタグなど）を
+    スペース（属性の区切り）などで安全に分割するヘルパー関数
+    """
+    chunks = []
+    current_chunk = ""
+    
+    # スペースで分割してみる（属性ごと、単語ごとに分けるため）
+    words = re.split(r'(\s+)', text)
+    
+    for word in words:
+        word_bytes = len(word.encode('utf-8'))
+        current_chunk_bytes = len(current_chunk.encode('utf-8'))
+        
+        if current_chunk_bytes + word_bytes <= max_bytes:
+            current_chunk += word
+        else:
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+            
+            # 単語そのものが巨大な場合（長いURLやBase64など）
+            if word_bytes > max_bytes:
+                # 仕方ないので文字単位で強制分割
+                sub_chunks = split_string_by_bytes(word, max_bytes)
+                chunks.extend(sub_chunks[:-1])
+                current_chunk = sub_chunks[-1]
+            else:
+                current_chunk = word
+                
+    if current_chunk:
+        chunks.append(current_chunk)
+        
+    return chunks
+
+
 def insert_line_breaks_for_activecore(html: str, max_bytes: int = 800) -> str:
     """
-    アクティブコア対応：800バイトを超える行だけを分割
-    短い行はそのまま維持
+    アクティブコア対応（改善版）：
+    HTMLのタグ構造を考慮して、可能な限りタグの区切りで改行を入れることで
+    ソースコードの可読性を維持しつつバイト数制限をクリアする。
     """
-    lines = html.split('\n')
-    result_lines = []
+    # HTMLを「タグ」と「それ以外（テキスト）」に分割する正規表現
+    # (<[^>]+>) でタグ全体をキャプチャして分割リストに残す
+    tokens = re.split(r'(<[^>]+>)', html)
+    # 空文字を除去
+    tokens = [t for t in tokens if t]
     
-    for line in lines:
-        line_bytes = len(line.encode('utf-8'))
+    lines = []
+    current_line = ""
+    
+    for token in tokens:
+        # このトークン（タグやテキスト）を追加したときのバイト数を計算
+        token_bytes = len(token.encode('utf-8'))
+        current_bytes = len(current_line.encode('utf-8'))
         
-        # 800バイト以下ならそのまま
-        if line_bytes <= max_bytes:
-            result_lines.append(line)
-            continue
-        
-        # 800バイトを超える場合のみ分割
-        current_chunk = ""
-        i = 0
-        
-        while i < len(line):
-            char = line[i]
-            test_chunk = current_chunk + char
-            test_bytes = len(test_chunk.encode('utf-8'))
+        # 追加しても制限内なら、そのまま連結
+        if current_bytes + token_bytes <= max_bytes:
+            current_line += token
+        else:
+            # 制限を超えるなら、今の行を確定して改行（リストに追加）
+            if current_line:
+                lines.append(current_line)
+                current_line = ""
             
-            # max_bytes-100 に達したら分割ポイントを探す
-            if test_bytes >= max_bytes - 100:
-                # 次の > を探す（タグの終わり）
-                next_tag_end = line.find('>', i)
-                
-                if next_tag_end != -1 and (next_tag_end - i) < 100:
-                    # タグの終わりまで含める
-                    current_chunk += line[i:next_tag_end + 1]
-                    i = next_tag_end + 1
-                    
-                    # チャンクを保存して次へ
-                    result_lines.append(current_chunk)
-                    current_chunk = ""
-                    continue
-                else:
-                    # タグの終わりが見つからない場合、安全な位置で分割
-                    # スペースを探す
-                    last_space = current_chunk.rfind(' ')
-                    if last_space > len(current_chunk) * 0.8:  # 後半80%以降にスペースがあれば
-                        result_lines.append(current_chunk[:last_space])
-                        current_chunk = current_chunk[last_space + 1:] + char
-                        i += 1
-                    else:
-                        # スペースもない場合は強制分割
-                        result_lines.append(current_chunk)
-                        current_chunk = char
-                        i += 1
+            # もしトークン単体で制限を超えている場合（巨大な画像タグや長いテキストなど）
+            if token_bytes > max_bytes:
+                # 特別な処理で細かく分割する
+                chunks = split_long_token(token, max_bytes)
+                lines.extend(chunks[:-1])
+                current_line = chunks[-1]
             else:
-                current_chunk += char
-                i += 1
+                # 次の行の先頭にする
+                current_line = token
+                
+    # 最後の行を追加
+    if current_line:
+        lines.append(current_line)
         
-        # 残りを追加
-        if current_chunk:
-            result_lines.append(current_chunk)
-    
-    return '\n'.join(result_lines)
+    return '\n'.join(lines)
 
+
+# --- 圧縮ロジック関数群 ---
 
 def compress_header_only(html: str) -> str:
     """ヘッダーのみ圧縮"""
@@ -152,7 +192,7 @@ def compress_smart(html: str) -> str:
     result = html
     
     # コメント削除（条件付きコメントは残す）
-    result = re.sub(r'<!--(?!\[if)(?!.*?\[endif\]).*?-->', '', result, flags=re.DOTALL)
+    result = re.sub(r'', '', result, flags=re.DOTALL)
     
     # 複数の空白を1つに
     result = re.sub(r'[ \t]+', ' ', result)
@@ -174,7 +214,7 @@ def compress_aggressive(html: str) -> str:
     result = html
     
     # 全てのコメント削除
-    result = re.sub(r'<!--.*?-->', '', result, flags=re.DOTALL)
+    result = re.sub(r'', '', result, flags=re.DOTALL)
     
     # 改行をすべて削除
     result = result.replace('\n', '')
@@ -200,7 +240,7 @@ def compress_complete(html: str) -> str:
     result = html
     
     # 全てのコメント削除
-    result = re.sub(r'<!--.*?-->', '', result, flags=re.DOTALL)
+    result = re.sub(r'', '', result, flags=re.DOTALL)
     
     # 全ての改行・タブ・複数スペースを削除
     result = re.sub(r'\s+', ' ', result)
@@ -246,7 +286,7 @@ def check_line_byte_limits(html: str, max_bytes: int = 800) -> tuple:
     return violations, lines
 
 
-# メインエリア
+# --- メインエリア ---
 col1, col2 = st.columns([1, 1])
 
 with col1:
@@ -368,6 +408,6 @@ st.markdown(f"""
 <div style='text-align: center; color: gray; font-size: 0.9em;'>
     <p>💡 <b>Tips:</b> Smart版は可読性とサイズのバランスが良く、通常使用に最適です</p>
     <p>⚠️ 圧縮後は必ず動作確認を行ってください</p>
-    {'<p>📤 <b>アクティブコアモード:</b> 1行800バイト制限に対応した改行を自動挿入</p>' if activecore_mode else ''}
+    {'<p>📤 <b>アクティブコアモード:</b> 1行800バイト制限に対応した改行を自動挿入（タグ優先分割）</p>' if activecore_mode else ''}
 </div>
 """, unsafe_allow_html=True)
