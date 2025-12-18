@@ -353,15 +353,16 @@ def compress_selective(html: str) -> str:
     return '\n'.join(result_parts)
 
 def compress_selective_indent(html: str) -> str:
-    """選択的インデント保持 - テーブル系タグは左寄せ、その他は構造保持"""
-    # インデントを削除するタグ（頻出するテーブル系）
-    NO_INDENT_TAGS = [
+    """選択的インデント保持 - テーブル系タグは親のインデントを継承（最大2階層）"""
+    NO_INDENT_INCREASE_TAGS = [
         'table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th',
         'colgroup', 'col'
     ]
     
     lines = html.split('\n')
     result_lines = []
+    current_indent = 0
+    MAX_INDENT = 8  # 最大8スペース（2階層）
     
     for line in lines:
         if not line.strip():
@@ -394,19 +395,22 @@ def compress_selective_indent(html: str) -> str:
         
         if tag_match:
             tag_name = tag_match.group(1).lower()
+            is_closing = content.startswith('</')
             
-            if tag_name in NO_INDENT_TAGS:
-                # テーブル系タグはインデントなし（左寄せ）
-                result_lines.append(content)
-            else:
-                # その他のタグは最小限のインデント
-                # divの開きタグをカウントして深さを判定
-                depth = sum(1 for l in result_lines[-10:] if '<div' in l and '</div' not in l)
-                indent = '    ' * min(depth, 2)  # 最大2階層、4スペース単位
-                result_lines.append(indent + content)
+            # 閉じタグの場合、インデントを減らす（テーブルタグ以外）
+            if is_closing and tag_name not in NO_INDENT_INCREASE_TAGS:
+                current_indent = max(0, current_indent - 4)
+            
+            # 現在のインデント（最大値で制限）
+            actual_indent = min(current_indent, MAX_INDENT)
+            result_lines.append(' ' * actual_indent + content)
+            
+            # 開きタグの場合、次の行のためにインデントを増やす（テーブルタグ以外）
+            if not is_closing and not content.endswith('/>') and tag_name not in NO_INDENT_INCREASE_TAGS:
+                current_indent = min(current_indent + 4, MAX_INDENT)
         else:
-            # タグ以外（テキストノードなど）は左寄せ
-            result_lines.append(content)
+            actual_indent = min(current_indent, MAX_INDENT)
+            result_lines.append(' ' * actual_indent + content)
     
     return '\n'.join(result_lines)
 
